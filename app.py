@@ -67,7 +67,7 @@ def save_data():
     st.session_state.backup_json = json.dumps(data, ensure_ascii=False)
 
 def load_data():
-    if 'backup := st.session_state.get("backup_json"):
+    if backup := st.session_state.get("backup_json"):
         try:
             data = json.loads(backup)
             st.session_state.keychains = data.get("keychains", [])
