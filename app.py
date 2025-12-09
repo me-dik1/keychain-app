@@ -2,110 +2,137 @@ import streamlit as st
 import random
 import base64
 import json
+from datetime import date
 
-st.set_page_config(page_title="我的鎖匙扣抽籤", layout="wide", page_icon="🔑")
+st.set_page_config(page_title="鎖匙扣抽籤＋使用記錄", layout="centered", page_icon="🔑")
 
-# 自訂CSS讓介面更漂亮
+# 靚仔 CSS
 st.markdown("""
-    <style>
-    .stButton > button { background-color: #4CAF50; color: white; border-radius: 8px; }
-    .stSuccess { background-color: #E8F5E9; }
-    .stWarning { background-color: #FFF3E0; }
-    .item { display: flex; align-items: center; margin-bottom: 10px; }
-    .item img { max-width: 80px; margin-left: 10px; }
-    </style>
+<style>
+    .big-button button {height: 60px !important; font-size: 20px !important;}
+    .used-today {background-color: #E8F5E9; padding: 10px; border-radius: 10px; margin: 10px 0;}
+    .stButton > button {border-radius: 12px;}
+</style>
 """, unsafe_allow_html=True)
 
-st.title("🔑 我的鎖匙扣抽籤機")
-st.markdown("可愛又實用的工具，記錄你的鎖匙扣收藏！")
+st.title("🔑 我的鎖匙扣抽籤＋使用記錄")
 
 # 初始化
 if 'keychains' not in st.session_state:
-    st.session_state.keychains = []  # list of dict: {'name': str, 'image': base64 or None}
-if 'drawn' not in st.session_state:
-    st.session_state.drawn = set()
+    st.session_state.keychains = []      # [{'name': '香蕉', 'image': base64}]
+if 'drawn_history' not in st.session_state:   # 抽籤歷史（自動）
+    st.session_state.drawn_history = set()
+if 'used_records' not in st.session_state:    # 實際使用記錄（手動）
+    st.session_state.used_records = {}   # { "2025-12-09": "香蕉" }
 
-# ==== 添加鎖匙扣 ====
+# ==================== 1. 添加鎖匙扣 ====================
 with st.expander("➕ 添加新鎖匙扣", expanded=True):
-    col1, col2 = st.columns(2)
-    with col1:
-        new_name = st.text_input("輸入名稱", placeholder="例如：香蕉、初音未來...")
-    with col2:
-        uploaded_file = st.file_uploader("上傳圖片（可選）", type=["jpg", "png", "jpeg"])
-    add_col, shuffle_col = st.columns(2)
-    if add_col.button("添加", use_container_width=True):
-        if new_name.strip():
-            image_base64 = None
-            if uploaded_file:
-                image_bytes = uploaded_file.read()
-                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-            st.session_state.keychains.append({'name': new_name.strip(), 'image': image_base64})
-            st.success(f"已加入：{new_name.strip()}")
+    c1, c2 = st.columns(2)
+    name = c1.text_input("名稱", placeholder="例如：香蕉、初音、史努比")
+    pic = c2.file_uploader("圖片（可選）", type=["png","jpg","jpeg","webp"])
+    a1, a2 = st.columns(2)
+    if a1.button("✅ 添加", use_container_width=True):
+        if name.strip():
+            img64 = None
+            if pic:
+                img64 = base64.b64encode(pic.read()).decode()
+            st.session_state.keychains.append({"name": name.strip(), "image": img64})
+            st.success(f"已加入：{name.strip()}")
             st.rerun()
-    if shuffle_col.button("隨機排序列表", use_container_width=True):
+    if a2.button("🎲 隨機排序", use_container_width=True):
         random.shuffle(st.session_state.keychains)
-        st.success("順序已打亂！")
+        st.success("順序已打亂")
         st.rerun()
 
-# ==== 顯示列表 ====
-if st.session_state.keychains:
-    st.markdown(f"### 目前擁有（共 {len(st.session_state.keychains)} 個）")
-    for i, kc in enumerate(st.session_state.keychains):
-        col1, col2 = st.columns([3, 1])
-        col1.write(f"{i+1}. {kc['name']}")
-        if kc['image']:
-            col2.image(f"data:image/png;base64,{kc['image']}", width=80)
-else:
-    st.info("還沒有鎖匙扣，快去添加吧！")
+# ==================== 2. 當前列表 ====================
+st.subheader(f"📋 目前擁有 {len(st.session_state.keychains)} 個")
+for i, item in enumerate(st.session_state.keychains):
+    c1, c2 = st.columns([4,1])
+    c1.write(f"**{i+1}. {item['name']}**")
+    if item['image']:
+        c2.image(f"data:image/png;base64,{item['image']}", width=80)
 
-# ==== 抽籤 ====
+# ==================== 3. 抽籤區（自動記錄） ====================
 st.markdown("---")
 if st.session_state.keychains:
-    available = [kc for kc in st.session_state.keychains if kc['name'] not in st.session_state.drawn]
-    if available:
-        if st.button("🎲 今日用哪個？抽！", use_container_width=True, type="primary"):
-            chosen = random.choice(available)
-            st.session_state.drawn.add(chosen['name'])
+    未抽過 = [k for k in st.session_state.keychains if k['name'] not in st.session_state.drawn_history]
+    if 未抽過:
+        if st.button("🎲 今日運勢！抽一個！", use_container_width=True, type="primary"):
+            chosen = random.choice(未抽過)
+            st.session_state.drawn_history.add(chosen['name'])
             st.balloons()
-            st.success(f"抽中啦！！今天用：**{chosen['name']}**")
+            st.success(f"抽中：**{chosen['name']}**")
             if chosen['image']:
                 st.image(f"data:image/png;base64,{chosen['image']}", width=200)
     else:
-        st.warning("全部都用過了喔！")
-else:
-    st.info("請先添加鎖匙扣再來抽籤")
-
-# ==== 抽取歷史 + 手動記錄 ====
-with st.expander(f"📜 抽取歷史（已用 {len(st.session_state.drawn)} 個）"):
-    if st.session_state.drawn:
-        for name in st.session_state.drawn:
-            kc = next((k for k in st.session_state.keychains if k['name'] == name), None)
-            st.write(f"• {name}")
-            if kc and kc['image']:
-                st.image(f"data:image/png;base64,{kc['image']}", width=80)
-    else:
-        st.write("還沒用過任何一個")
-    
-    # 新功能: 手動記錄
-    manual_available = [kc['name'] for kc in st.session_state.keychains if kc['name'] not in st.session_state.drawn]
-    if manual_available:
-        selected = st.selectbox("手動標記已用", manual_available)
-        if st.button("標記為已用"):
-            st.session_state.drawn.add(selected)
-            st.success(f"已手動記錄：{selected}")
+        st.warning("⚠️ 全部都抽過晒！")
+        if st.button("重置抽籤歷史"):
+            st.session_state.drawn_history.clear()
             st.rerun()
+else:
+    st.info("請先添加鎖匙扣")
 
-# ==== 重置 ====
-col_reset, col_clear = st.columns(2)
-if col_reset.button("重置抽籤記錄", use_container_width=True):
-    st.session_state.drawn.clear()
-    st.success("已重置！可以重新抽啦～")
+# ==================== 4. 實際使用記錄（全新手動區） ====================
+st.markdown("---")
+st.subheader("✍️ 今日實際用咗邊個？（手動記錄）")
+
+today = date.today().isoformat()
+today_used = st.session_state.used_records.get(today)
+
+if today_used:
+    kc = next((k for k in st.session_state.keychains if k['name']==today_used), None)
+    st.markdown(f"<div class='used-today'>✅ 今日已記錄使用：<b>{today_used}</b></div>", 
+                unsafe_allow_html=True)
+    if kc and kc['image']:
+        st.image(f"data:image/png;base64,{kc['image']}", width=150)
+
+# 手動選擇今天用咗邊個
+options = [k['name'] for k in st.session_state.keychains]
+selected = st.selectbox("選擇今日實際使用的鎖匙扣", [""] + options, index=0 if not today_used else options.index(today_used)+1)
+
+colA, colB = st.columns(2)
+if colA.button("✔️ 記錄今日使用", use_container_width=True, type="primary"):
+    if selected:
+        st.session_state.used_records[today] = selected
+        st.success(f"已記錄：今日用咗 {selected}")
+        st.rerun()
+if colB.button("🗑️ 刪除今日記錄", use_container_width=True):
+    st.session_state.used_records.pop(today, None)
     st.rerun()
-if col_clear.button("⚠️ 清空所有資料", use_container_width=True):
+
+# ==================== 歷史區分開顯示 ====================
+col1, col2 = st.columns(2)
+with col1:
+    with st.expander("🎲 抽籤歷史（自動）"):
+        if st.session_state.drawn_history:
+            for n in st.session_state.drawn_history:
+                st.write(f"• {n}")
+        else:
+            st.write("未有")
+with col2:
+    with st.expander("✍️ 實際使用日曆"):
+        for d, name in sorted(st.session_state.used_records.items(), reverse=True):
+            st.write(f"**{d}** → {name}")
+
+# ==================== 重置 & 備份 ====================
+st.markdown("---")
+c1, c2, c3 = st.columns(3)
+if c1.button("重置抽籤歷史"):
+    st.session_state.drawn_history.clear()
+    st.rerun()
+if c2.button("清空實際使用記錄"):
+    st.session_state.used_records.clear()
+    st.rerun()
+if c3.button("⚠️ 全部清空"):
     st.session_state.keychains = []
-    st.session_state.drawn.clear()
+    st.session_state.drawn_history = set()
+    st.session_state.used_records = {}
     st.rerun()
 
-# 雲端版自動儲存session，但若想手動備份，可加JSON下載
-data = {'keychains': st.session_state.keychains, 'drawn': list(st.session_state.drawn)}
-st.download_button("下載備份", json.dumps(data), "keychain_backup.json")
+# 備份功能
+backup = {
+    "keychains": st.session_state.keychains,
+    "drawn": list(st.session_state.drawn_history),
+    "used": st.session_state.used_records
+}
+st.download_button("💾 下載備份", json.dumps(backup, ensure_ascii=False), "鎖匙扣備份.json")
