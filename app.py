@@ -136,7 +136,7 @@ with tab3:
         st.rerun()
 
     # 同步 link
-    sync_link = f"{st.experimental_get_url()}?d={st.query_params.get('d','')[0] if st.query_params.get('d') else ''}"
+    sync_link = f"{st.secrets["APP_URL"]}?d={st.query_params.get('d','')[0] if st.query_params.get('d') else ''}"
     st.text_input("同步 link（抄低換手機用）", sync_link)
     st.info("換手機打開呢條 link 就自動同步資料！")
 
