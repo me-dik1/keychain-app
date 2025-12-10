@@ -152,7 +152,7 @@ with tab3:
             st.error("檔案錯誤")
     
     # 同步 link（已修復問題1）
-    current_url = st.experimental_get_url() if hasattr(st, "experimental_get_url") else "https://ahl1-key.streamlit.app"
+    current_url = st.secrets["APP_URL"] if hasattr(st, "APP_URL") else "https://ahl1-key.streamlit.app"
     data_param = st.query_params.get("d", "")
     data_str = data_param[0] if isinstance(data_param, list) else data_param
     sync_link = f"{current_url}?d={data_str}" if data_str else current_url
