@@ -3,7 +3,6 @@ import random
 import base64
 import json
 from datetime import date
-import firebase_admin
 from firebase_admin import credentials, firestore, auth
 
 # ============ Firebase 初始化 (用secrets) ============
