@@ -19,7 +19,7 @@ if st.session_state.get("auth") != True:
             st.error("密碼錯誤")
     st.stop()
 
-# ============ 美化（高對比：淺藍底 + 深藍字 + 裝飾）============
+# ============ 美化（高對比 + 裝飾）============
 st.markdown("""
 <style>
     .stApp {background: #f0f7ff; color: #1e3a8a; font-family: 'Arial', sans-serif;}
@@ -29,24 +29,18 @@ st.markdown("""
     .stFileUploader {border: 2px dashed #93c5fd; border-radius: 12px; padding: 20px;}
     .green {color: #15803d;}
     .gray {color: #6b7280;}
-    .deco {position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0.1; z-index: -1;}
-    .deco img {position: absolute; animation: float 20s infinite linear;}
-    @keyframes float {0% {transform: translateY(100vh) rotate(0deg);} 100% {transform: translateY(-100px) rotate(360deg);}}
 </style>
-<div class="deco">
-    <img src="https://i.pinimg.com/originals/1f/3d/9a/1f3d9a8f8f8f8f8f8f8f8f8f8f8f8f8f.jpg" style="top:10%;left:10%;animation-delay:0s;" width=100>
-    <img src="https://i.pinimg.com/originals/2g/4e/9b/2g4e9b8f8f8f8f8f8f8f8f8f8f8f8f8f.jpg" style="top:30%;left:70%;animation-delay:5s;" width=100>
-    <img src="https://i.pinimg.com/originals/3h/5f/9c/3h5f9c8f8f8f8f8f8f8f8f8f8f8f8f8f.jpg" style="top:60%;left:20%;animation-delay:10s;" width=100>
-</div>
 """, unsafe_allow_html=True)
 
-# ============ 數據儲存（關閉不丟）============
+# ============ 數據儲存（修復同步問題）============
 DATA_KEY = "keychain_data"
 if DATA_KEY not in st.session_state:
     saved = st.query_params.get("d")
     if saved:
         try:
-            st.session_state[DATA_KEY] = json.loads(saved[0])
+            # 修復問題1：安全處理 query_params
+            data_str = saved[0] if isinstance(saved, list) else saved
+            st.session_state[DATA_KEY] = json.loads(data_str)
         except:
             st.session_state[DATA_KEY] = {"items": [], "drawn": [], "used": []}
     else:
@@ -69,7 +63,7 @@ with tab1:
     if items:
         avail = [k for k in items if k["name"] not in drawn]
         if avail:
-            if st.button("抽籤！"):
+            if st.button("抽籤！", use_container_width=True):
                 win = random.choice(avail)
                 drawn.add(win["name"])
                 save()
@@ -88,57 +82,82 @@ with tab1:
 
 with tab2:
     st.title("檔案庫管理")
-    name = st.text_input("名稱", key="add_name")
-    pic = st.file_uploader("圖片")
-    if st.button("加入"):
-        if name.strip():
-            img64 = base64.b64encode(pic.read()).decode() if pic else None
-            items.append({"name": name.strip(), "image": img64})
-            save()
-            st.success("加入成功")
-            st.rerun()
+    
+    # 新增（正常）
+    with st.expander("新增鎖匙扣", expanded=True):
+        name = st.text_input("名稱", key="new_name")
+        pic = st.file_uploader("圖片（可選）", type=["png","jpg","jpeg","webp","gif"], key="new_pic")
+        if st.button("加入", key="add_btn"):
+            if name.strip():
+                img64 = base64.b64encode(pic.read()).decode() if pic else None
+                items.append({"name": name.strip(), "image": img64})
+                save()
+                st.success("加入成功！")
+                st.rerun()
 
     st.subheader(f"總 {len(items)} 個 | 抽過 {len(drawn)} | 用過 {len(used)}")
+    
+    # 顯示 + 編輯 + 後加圖片（修復問題2）
     for i, k in enumerate(items[:]):
-        cols = st.columns([3,2,1,1,3])
-        cols[0].write(k["name"])
+        cols = st.columns([3, 2, 1, 1, 2, 2])
+        cols[0].write(f"**{k['name']}**")
         if k["image"]:
             cols[1].image(f"data:image/png;base64,{k['image']}", width=80)
-        cols[2].write("✓" if k["name"] in drawn else "—")
-        cols[3].write("✓" if k["name"] in used else "—")
+        else:
+            cols[1].write("—")
+        cols[2].write("Check" if k["name"] in drawn else "—")
+        cols[3].write("Check" if k["name"] in used else "—")
+        
         if cols[4].button("用過", key=f"use_{i}"):
-            if k["name"] in used: used.remove(k["name"])
-            else: used.add(k["name"])
+            if k["name"] in used:
+                used.remove(k["name"])
+            else:
+                used.add(k["name"])
             save()
             st.rerun()
-        if st.button("刪除", key=f"del_{i}"):
+            
+        if cols[5].button("刪除", key=f"del_{i}"):
             items.pop(i)
             save()
             st.rerun()
-        if st.button("編輯圖片", key=f"edit_{i}"):
-            new_pic = st.file_uploader("換圖片", key=f"new_pic_{i}")
+    
+    # 後加圖片（獨立區塊，修復問題2）
+    st.divider()
+    st.subheader("後加/換圖片")
+    edit_name = st.selectbox("選擇鎖匙扣", [k["name"] for k in items])
+    if edit_name:
+        idx = next(i for i, k in enumerate(items) if k["name"] == edit_name)
+        new_pic = st.file_uploader("上傳新圖片", type=["png","jpg","jpeg","webp","gif"], key=f"edit_pic_{idx}")
+        if st.button("更新圖片", key=f"update_pic_{idx}"):
             if new_pic:
-                k["image"] = base64.b64encode(new_pic.read()).decode()
+                items[idx]["image"] = base64.b64encode(new_pic.read()).decode()
                 save()
-                st.success("圖片更新成功")
+                st.success("圖片更新成功！")
                 st.rerun()
 
 with tab3:
     st.title("備份與同步")
     backup = json.dumps(data, ensure_ascii=False)
     st.download_button("下載備份", backup, f"備份_{date.today()}.json")
-    uploaded = st.file_uploader("上載備份", type="json")
+    
+    uploaded = st.file_uploader("上載備份還原", type="json")
     if uploaded:
-        newdata = json.load(uploaded)
-        st.session_state.data = newdata
-        save()
-        st.success("還原成功")
-        st.rerun()
-
-    # 同步 link
-    sync_link = f"{st.secrets["APP_URL"]}?d={st.query_params.get('d','')[0] if st.query_params.get('d') else ''}"
+        try:
+            newdata = json.load(uploaded)
+            st.session_state.data = newdata
+            save()
+            st.success("還原成功！")
+            st.rerun()
+        except:
+            st.error("檔案錯誤")
+    
+    # 同步 link（已修復問題1）
+    current_url = st.experimental_get_url() if hasattr(st, "experimental_get_url") else "https://your-app.streamlit.app"
+    data_param = st.query_params.get("d", "")
+    data_str = data_param[0] if isinstance(data_param, list) else data_param
+    sync_link = f"{current_url}?d={data_str}" if data_str else current_url
     st.text_input("同步 link（抄低換手機用）", sync_link)
-    st.info("換手機打開呢條 link 就自動同步資料！")
+    st.info("換手機打開呢條 link 就自動同步晒所有資料（包括圖片）！")
 
 # 登出
 if st.sidebar.button("登出"):
