@@ -3,252 +3,186 @@ import random
 import base64
 import json
 from datetime import date
+import firebase_admin
+from firebase_admin import credentials, firestore, auth
+import extra_streamlit_components as stx
+import jwt
+from functools import partial
+from typing import Optional
 
-# ==================== 超靚藍綠玻璃風格 CSS ====================
-st.set_page_config(page_title="我的鎖匙扣", layout="wide", page_icon="🔑")
-
+# 美化CSS（漸變背景、字體、主題）
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
-    
-    body, .stApp { font-family: 'Noto Sans TC', sans-serif; }
-    .stApp { 
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        background-attachment: fixed;
-    }
-    .main-container {
-        background: rgba(255, 255, 255, 0.95);
-        border-radius: 20px;
-        padding: 25px;
-        margin: 20px auto;
-        max-width: 1400px;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.2);
-        backdrop-filter: blur(10px);
-    }
-    h1, h2, h3 { color: #2c3e50; font-weight: 700; }
-    .nav-button button {
-        background: linear-gradient(45deg, #4CAF50, #2196F3);
-        background: linear-gradient(45deg, #4CAF50, #2196F3);
-        color: white !important;
-        border: none;
-        border-radius: 50px;
-        padding: 12px 25px;
-        font-size: 1.1em;
-        font-weight: 600;
-        margin: 5px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        transition: all 0.3s;
-    }
-    .nav-button button:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); }
-    .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 0.9em; font-weight: bold; }
-    .drawn { background: #e3f2fd; color: #1976d2; }
-    .used { background: #e8f5e9; color: #388e3c; }
-    .card { 
-        background: white; 
-        border-radius: 16px; 
-        padding: 20px; 
-        margin: 15px 0; 
-        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
-        transition: transform 0.3s;
-    }
-    .card:hover { transform: translateY(-5px); }
-    .stButton>button { border-radius: 12px !important; height: 3em; }
+    .stApp { background: linear-gradient(to bottom right, #f0f8ff, #e0f7fa); font-family: 'Serif', serif; }
+    .card { background: #ffffff; border: 2px solid #4CAF50; border-radius: 15px; padding: 20px; margin: 15px 0; box-shadow: 0 6px 12px rgba(0,0,0,0.15); }
+    .stButton > button { background: linear-gradient(to right, #4CAF50, #2196F3); color: white; border-radius: 12px; font-size: 16px; padding: 10px; }
+    .stDataFrame { border: 1px solid #ddd; border-radius: 10px; }
+    .green-check { color: green; font-weight: bold; }
+    .gray-blank { color: gray; }
+    h1, h2, h3 { color: #2c3e50; }
+    .sidebar .stRadio > div { background: #e8f5e9; border-radius: 10px; padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== 永久儲存（解決第5點：關掉不見、手機同步） ====================
+# Firebase初始化（用secrets）
+if not firebase_admin._apps:
+    cred = credentials.Certificate(json.loads(st.secrets["FIREBASE_SERVICE_ACCOUNT"]))
+    firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# Auth functions (simplified from gist)
+def authenticate_user(email, password):
+    try:
+        user = auth.verify_id_token(auth.sign_in_with_email_and_password(email, password)['idToken'])
+        return user['localId']
+    except:
+        return None
+
+def register_user(email, password, name):
+    try:
+        user = auth.create_user(email=email, password=password, display_name=name)
+        return user.uid
+    except:
+        return None
+
+# Session & Auth
+cookie_manager = stx.b64_cookie_manager()
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = None
+
+# 登入/註冊頁
+if not st.session_state.user_id:
+    st.title("請登入或註冊")
+    tab1, tab2 = st.tabs(["登入", "註冊"])
+    with tab1:
+        email = st.text_input("電郵")
+        password = st.text_input("密碼", type="password")
+        if st.button("登入"):
+            uid = authenticate_user(email, password)
+            if uid:
+                st.session_state.user_id = uid
+                st.rerun()
+            else:
+                st.error("登入失敗")
+    with tab2:
+        new_email = st.text_input("新電郵")
+        new_name = st.text_input("名字")
+        new_password = st.text_input("新密碼", type="password")
+        if st.button("註冊"):
+            uid = register_user(new_email, new_password, new_name)
+            if uid:
+                st.success("註冊成功，請登入")
+            else:
+                st.error("註冊失敗")
+    st.stop()
+
+# 載入數據從Firestore
+doc_ref = db.collection("users").document(st.session_state.user_id)
+data = doc_ref.get().to_dict() or {}
+st.session_state.keychains = data.get("keychains", [])
+st.session_state.drawn = set(data.get("drawn", []))
+st.session_state.used = set(data.get("used", []))  # 改為set，記錄用過邊樣
+
+# 保存函數
 def save_data():
-    data = {
+    doc_ref.set({
         "keychains": st.session_state.keychains,
         "drawn": list(st.session_state.drawn),
-        "used": st.session_state.used,
-        "currently_using": st.session_state.currently_using
-    }
-    st.session_state.backup_json = json.dumps(data, ensure_ascii=False)
+        "used": list(st.session_state.used)
+    })
 
-def load_data():
-    if 'backup := st.session_state.get("backup_json"):
-        try:
-            data = json.loads(backup)
-            st.session_state.keychains = data.get("keychains", [])
-            st.session_state.drawn = set(data.get("drawn", []))
-            st.session_state.used = data.get("used", {})
-            st.session_state.currently_using = data.get("currently_using", "")
-        except:
-            pass
+# Sidebar按鈕列表分頁
+page = st.sidebar.radio("頁面", ["主頁（抽籤）", "管理檔案庫", "備份與匯入"])
 
-# 初始化
-if "keychains" not in st.session_state:
-    st.session_state.keychains = []
-    st.session_state.drawn = set()
-    st.session_state.used = {}           # {日期: 名稱}
-    st.session_state.currently_using = "" # 目前正在用的（第4點）
-    load_data()
-
-# 每次有變動就自動儲存
-def auto_save():
-    save_data()
-    st.rerun()
-
-# ==================== 頁面導航（改成靚靚按鈕） ====================
-st.markdown("<div class='main-container'>", unsafe_allow_html=True)
-st.markdown("<h1 style='text-align:center; color:white; text-shadow: 0 4px 10px rgba(0,0,0,0.4);'>🔑 我的鎖匙扣</h1>", unsafe_allow_html=True)
-
-col_btn1, col_btn2, col_btn3 = st.columns(3)
-with col_btn1:
-    if st.button("抽籤 + 使用", use_container_width=True, type="primary"):
-        st.session_state.page = "main"
-with col_btn2:
-    if st.button("鎖匙扣檔案庫", use_container_width=True):
-        st.session_state.page = "library"
-with col_btn3:
-    if st.button("備份與匯入", use_container_width=True):
-        st.session_state.page = "backup"
-
-if "page" not in st.session_state:
-    st.session_state.page = "main"
-
-# ============================== 主頁 ==============================
-if st.session_state.page == "main":
-    st.markdown("<h2>今日抽籤</h2>", unsafe_allow_html=True)
-    
-    if not st.session_state.keychains:
-        st.info("你仲未有鎖匙扣呀～快啲去「鎖匙扣檔案庫」加啦！")
-    else:
+if page == "主頁（抽籤）":
+    st.title("🔑 我的鎖匙扣抽籤")
+    if st.session_state.keychains:
         avail = [k for k in st.session_state.keychains if k['name'] not in st.session_state.drawn]
-        
         if avail:
-            if st.button("抽籤！", use_container_width=True, type="primary"):
+            if st.button("🎲 抽一個！", type="primary", use_container_width=True):
                 win = random.choice(avail)
                 st.session_state.drawn.add(win['name'])
-                auto_save()
+                save_data()
                 st.balloons()
-                st.success(f"抽中：{win['name']}！")
-                if win['image']:
-                    st.image(f"data:image/png;base64,{win['image']}", width=250)
+                st.success(f"抽中：**{win['name']}**")
+                if win['image']: st.image(f"data:image/png;base64,{win['image']}", width=200)
         else:
-            st.warning("全部都抽晒啦！")
-            if st.button("重置抽籤記錄"):
-                st.session_state.drawn.clear()
-                auto_save()
-    
-    # 目前正在使用（第4點）
-    st.markdown("### 目前使用緊")
-    if st.session_state.currently_using:
-        cur = next((x for x in st.session_state.keychains if x['name']==st.session_state.currently_using), None)
-        if cur:
-            c1, c2 = st.columns([1,3])
-            with c1:
-                if cur['image']:
-                    st.image(f"data:image/png;base64,{cur['image']}", width=100)
-            with c2:
-                st.markdown(f"**{cur['name']}**")
-            if st.button("用完・收回", type="secondary"):
-                st.session_state.currently_using = ""
-                auto_save()
+            st.warning("全部抽晒！")
+            if st.button("重置抽籤歷史"): st.session_state.drawn.clear(); save_data(); st.rerun()
     else:
-        st.info("未有使用緊嘅鎖匙扣")
+        st.info("請先添加鎖匙扣")
 
-# ============================== 檔案庫（合併統計＋狀態＋一鍵切換使用中） ==============================
-elif st.session_state.page == "library":
-    st.markdown("<h2>鎖匙扣檔案庫</h2>", unsafe_allow_html=True)
-    
-    # 新增
+elif page == "管理檔案庫":
+    st.title("📂 檔案庫管理 + 歷史統計")
+    # 添加
     with st.expander("➕ 添加新鎖匙扣", expanded=True):
         c1, c2 = st.columns(2)
-        name = c1.text_input("名稱", key="new_name")
-        pic = c2.file_uploader("圖片（可選）", type=["png","jpg","jpeg","webp"], key="new_pic")
-        if st.button("加入檔案庫", type="primary", use_container_width=True):
+        name = c1.text_input("名稱")
+        pic = c2.file_uploader("圖片")
+        a1, a2 = st.columns(2)
+        if a1.button("添加"):
             if name.strip():
-                img64 = None
-                if pic:
-                    img64 = base64.b64encode(pic.read()).decode()
+                img64 = None if not pic else base64.b64encode(pic.read()).decode()
                 st.session_state.keychains.append({"name": name.strip(), "image": img64})
-                auto_save()
-                st.success("已加入！")
+                save_data()
                 st.rerun()
-    
-    st.markdown(f"**總共 {len(st.session_state.keychains)} 個鎖匙扣**　｜　隨機排序")
-    if st.button("隨機排序", use_container_width=False):
-        random.shuffle(st.session_state.keychains)
-        auto_save()
-    
-    # 顯示所有卡片（含狀態＋一鍵切換使用中）
-    for i, k in enumerate(st.session_state.keychains):
-        is_drawn = k['name'] in st.session_state.drawn
-        is_used = k['name'] in set(st.session_state.used.values())
-        is_current = k['name'] == st.session_state.currently_using
-        
-        with st.container():
-            cols = st.columns([1, 4, 2])
-            with cols[0]:
-                if k['image']:
-                    st.image(f"data:image/png;base64,{k['image']}", use_column_width=True)
-                else:
-                    st.markdown("<div style='height:120px;background:#eee;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#999;'>無圖</div>", unsafe_allow_html=True)
-            with cols[1]:
-                st.markdown(f"### {k['name']}")
-                status = []
-                if is_drawn: status.append("<span class='status-badge drawn'>已抽過</span>")
-                if is_used: status.append("<span class='status-badge used'>已用過</span>")
-                if is_current: status.append("<span class='status-badge' style='background:#fff3e0;color:#ef6c00;'>使用中</span>")
-                st.markdown("　".join(status), unsafe_allow_html=True)
-            with cols[2]:
-                if is_current:
-                    if st.button("收回", key=f"off_{i}", use_container_width=True):
-                        st.session_state.currently_using = ""
-                        auto_save()
-                else:
-                    if st.button("使用緊", key=f"on_{i}", type="primary", use_container_width=True):
-                        st.session_state.currently_using = k['name']
-                        # 自動記錄今日使用
-                        today = date.today().isoformat()
-                        st.session_state.used[today] = k['name']
-                        auto_save()
-                if st.button("刪除", key=f"del_{i}", type="secondary", use_container_width=True):
-                    del st.session_state.keychains[i]
-                    auto_save()
-    
-    # 編輯名稱（可選）
-    with st.expander("編輯名稱"):
-        options = [""] + [k['name'] for k in st.session_state.keychains]
-        sel = st.selectbox("選擇要改名", options, key="edit_sel")
+        if a2.button("隨機排序"):
+            random.shuffle(st.session_state.keychains)
+            save_data()
+            st.rerun()
+
+    # 表格顯示所有 + 狀態 + 編輯
+    st.subheader(f"擁有 {len(st.session_state.keychains)} 個 | 抽過 {len(st.session_state.drawn)} 個 | 用過 {len(st.session_state.used)} 個")
+    if st.session_state.keychains:
+        df_data = []
+        for i, k in enumerate(st.session_state.keychains):
+            drawn_mark = '<span class="green-check">✓</span>' if k['name'] in st.session_state.drawn else '<span class="gray-blank">-</span>'
+            used_mark = '<span class="green-check">✓</span>' if k['name'] in st.session_state.used else '<span class="gray-blank">-</span>'
+            preview = f'<img src="data:image/png;base64,{k["image"]}" width="50">' if k['image'] else ''
+            df_data.append({
+                "編號": i+1,
+                "名稱": k['name'],
+                "預覽": preview,
+                "抽過": drawn_mark,
+                "用過": used_mark
+            })
+        st.dataframe(df_data, use_container_width=True, hide_index=True)  # 修正error，用dataframe
+
+    # 編輯/刪除/狀態toggle
+    with st.expander("✏️ 編輯/刪除/狀態"):
+        sel = st.selectbox("選擇鎖匙扣", [""] + [k['name'] for k in st.session_state.keychains])
         if sel:
             idx = next(i for i,k in enumerate(st.session_state.keychains) if k['name']==sel)
-            new = st.text_input("新名稱", value=sel)
-            if st.button("儲存"):
-                st.session_state.keychains[idx]['name'] = new.strip()
-                auto_save()
+            new_name = st.text_input("新名稱", value=st.session_state.keychains[idx]['name'])
+            new_pic = st.file_uploader("加/換圖片")
+            c1,c2,c3,c4 = st.columns(4)
+            if c1.button("保存編輯"):
+                if new_name.strip(): st.session_state.keychains[idx]['name'] = new_name.strip()
+                if new_pic: st.session_state.keychains[idx]['image'] = base64.b64encode(new_pic.read()).decode()
+                save_data(); st.rerun()
+            if c2.button("刪除"):
+                del st.session_state.keychains[idx]; save_data(); st.rerun()
+            if c3.button("標記用過" if sel not in st.session_state.used else "取消用過"):
+                if sel in st.session_state.used: st.session_state.used.remove(sel)
+                else: st.session_state.used.add(sel)
+                save_data(); st.rerun()
+            if c4.button("重置這個抽過"):
+                if sel in st.session_state.drawn: st.session_state.drawn.remove(sel); save_data(); st.rerun()
 
-# ============================== 備份頁 ==============================
-else:
-    st.markdown("<h2>備份與匯入</h2>", unsafe_allow_html=True)
-    
-    backup_data = {
-        "keychains": st.session_state.keychains,
-        "drawn": list(st.session_state.drawn),
-        "used": st.session_state.used,
-        "currently_using": st.session_state.currently_using
-    }
-    st.download_button(
-        label="下載完整備份",
-        data=json.dumps(backup_data, ensure_ascii=False, indent=2),
-        file_name=f"我的鎖匙扣備份_{date.today()}.json",
-        mime="application/json"
-    )
-    
-    uploaded = st.file_uploader("匯入備份檔案", type="json")
-    if uploaded:
-        try:
-            data = json.load(uploaded)
-            st.session_state.keychains = data.get("keychains", [])
-            st.session_state.drawn = set(data.get("drawn", []))
-            st.session_state.used = data.get("used", {})
-            st.session_state.currently_using = data.get("currently_using", "")
-            save_data()
-            st.success("匯入成功！")
-            st.rerun()
-        except:
-            st.error("檔案格式錯誤")
+elif page == "備份與匯入":
+    st.title("💾 備份（雲端自動，但可手動）")
+    backup = {"keychains": st.session_state.keychains, "drawn": list(st.session_state.drawn), "used": list(st.session_state.used)}
+    st.download_button("下載本地備份", json.dumps(backup, ensure_ascii=False), f"備份_{date.today()}.json")
+    up = st.file_uploader("匯入本地備份", type="json")
+    if up:
+        data = json.load(up)
+        st.session_state.keychains = data.get("keychains", [])
+        st.session_state.drawn = set(data.get("drawn", []))
+        st.session_state.used = set(data.get("used", []))
+        save_data()
+        st.success("匯入成功"); st.rerun()
 
-st.markdown("</div>", unsafe_allow_html=True)
+# 登出
+if st.sidebar.button("登出"):
+    st.session_state.user_id = None
+    st.rerun()
